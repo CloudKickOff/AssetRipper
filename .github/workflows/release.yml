@@ -1,0 +1,97 @@
+name: Release
+
+# Run by hand from Actions > Release > Run workflow. Builds every platform from the chosen branch, tags the commit
+# v<version> and publishes a GitHub release with the downloads.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version, without the leading v (for example 2.0.0-ck.1)"
+        required: true
+        type: string
+      prerelease:
+        description: "Mark as a pre-release"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  build:
+    runs-on: ${{ matrix.config.os }}
+
+    strategy:
+      matrix:
+        config:
+          - { name: win_x64, os: windows-latest, runtime: win-x64, executable: AssetRipper.GUI.Free.exe }
+          - { name: win_arm64, os: windows-latest, runtime: win-arm64, executable: AssetRipper.GUI.Free.exe }
+          - { name: linux_x64, os: ubuntu-22.04, runtime: linux-x64, executable: AssetRipper.GUI.Free }
+          - { name: linux_arm64, os: ubuntu-22.04-arm, runtime: linux-arm64, executable: AssetRipper.GUI.Free }
+          - { name: mac_x64, os: macos-14, runtime: osx-x64, executable: AssetRipper.GUI.Free }
+          - { name: mac_arm64, os: macos-14, runtime: osx-arm64, executable: AssetRipper.GUI.Free }
+
+    steps:
+      - uses: actions/checkout@v7
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Publish
+        run: dotnet publish -c Release -r ${{ matrix.config.runtime }} -p:Version=${{ inputs.version }}
+        working-directory: ./Source/AssetRipper.GUI.Free/
+
+      - name: Record build time
+        shell: bash
+        run: date -u > ./Source/0Bins/AssetRipper.GUI.Free/Release/${{ matrix.config.runtime }}/publish/compile_time.txt
+
+      - name: Package (zip)
+        if: ${{ runner.os == 'Windows' }}
+        shell: pwsh
+        working-directory: ./Source/0Bins/AssetRipper.GUI.Free/Release/${{ matrix.config.runtime }}/publish
+        run: |
+          $files = @("${{ matrix.config.executable }}", "compile_time.txt") + (Get-ChildItem -Name -Include *.dll, *.so, *.dylib -Path *)
+          Compress-Archive -Path $files -DestinationPath "AssetRipper_${{ matrix.config.name }}.zip"
+
+      - name: Package (tar)
+        if: ${{ runner.os != 'Windows' }}
+        shell: bash
+        working-directory: ./Source/0Bins/AssetRipper.GUI.Free/Release/${{ matrix.config.runtime }}/publish
+        run: tar cvJf "AssetRipper_${{ matrix.config.name }}.tar.xz" "${{ matrix.config.executable }}" compile_time.txt $(ls *.{dll,so,dylib} 2>/dev/null)
+
+      - name: Upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: AssetRipper_${{ matrix.config.name }}
+          path: |
+            ./Source/0Bins/AssetRipper.GUI.Free/Release/${{ matrix.config.runtime }}/publish/AssetRipper_${{ matrix.config.name }}.zip
+            ./Source/0Bins/AssetRipper.GUI.Free/Release/${{ matrix.config.runtime }}/publish/AssetRipper_${{ matrix.config.name }}.tar.xz
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download builds
+        uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          ls -l dist
+          flags=()
+          if [ "$PRERELEASE" = "true" ]; then flags+=(--prerelease); fi
+          gh release create "v$VERSION" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "AssetRipper (CloudKickOff fork) v$VERSION" \
+            --generate-notes \
+            "${flags[@]}"

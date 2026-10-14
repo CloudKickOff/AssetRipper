@@ -2,8 +2,6 @@ name: NativeAOT Binary Analysis
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 0 * * 0" #once per week
 
 # The schedule event can be delayed during periods of high loads of GitHub Actions workflow runs
 #
