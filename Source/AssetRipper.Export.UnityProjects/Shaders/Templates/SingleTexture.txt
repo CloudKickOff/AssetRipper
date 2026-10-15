@@ -1,5 +1,5 @@
 	SubShader{
-		Tags { "RenderType"="Opaque" }
+		Tags { "RenderType" = "Opaque" }
 		LOD 200
 
 		Pass
@@ -7,40 +7,50 @@
 			HLSLPROGRAM
 			#pragma vertex vert
 			#pragma fragment frag
+			#pragma multi_compile_instancing
 
-			float4x4 unity_ObjectToWorld;
-			float4x4 unity_MatrixVP;
+			// UnityCG's transforms and the instancing macros pick the right eye's matrices when VR draws both eyes in one
+			// pass (single-pass instanced). Without them, objects using this shader would be drawn in one eye only.
+			#include "UnityCG.cginc"
+			#ifndef UNITY_VERTEX_INPUT_INSTANCE_ID
+			#define UNITY_VERTEX_INPUT_INSTANCE_ID
+			#define UNITY_SETUP_INSTANCE_ID(v)
+			#endif
+			#ifndef UNITY_VERTEX_OUTPUT_STEREO
+			#define UNITY_VERTEX_OUTPUT_STEREO
+			#define UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o)
+			#endif
+
 			float4 _MainTex_ST;
 
 			struct Vertex_Stage_Input
 			{
 				float4 pos : POSITION;
 				float2 uv : TEXCOORD0;
+				UNITY_VERTEX_INPUT_INSTANCE_ID
 			};
 
 			struct Vertex_Stage_Output
 			{
 				float2 uv : TEXCOORD0;
 				float4 pos : SV_POSITION;
+				UNITY_VERTEX_OUTPUT_STEREO
 			};
 
 			Vertex_Stage_Output vert(Vertex_Stage_Input input)
 			{
 				Vertex_Stage_Output output;
+				UNITY_SETUP_INSTANCE_ID(input);
+				UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
 				output.uv = (input.uv.xy * _MainTex_ST.xy) + _MainTex_ST.zw;
-				output.pos = mul(unity_MatrixVP, mul(unity_ObjectToWorld, input.pos));
+				output.pos = UnityObjectToClipPos(input.pos);
 				return output;
 			}
 
 			Texture2D<float4> _MainTex;
 			SamplerState sampler_MainTex;
 
-			struct Fragment_Stage_Input
-			{
-				float2 uv : TEXCOORD0;
-			};
-
-			float4 frag(Fragment_Stage_Input input) : SV_TARGET
+			float4 frag(Vertex_Stage_Output input) : SV_TARGET
 			{
 				return _MainTex.Sample(sampler_MainTex, input.uv.xy);
 			}

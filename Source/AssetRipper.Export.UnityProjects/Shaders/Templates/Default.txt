@@ -7,24 +7,38 @@
 			HLSLPROGRAM
 			#pragma vertex vert
 			#pragma fragment frag
+			#pragma multi_compile_instancing
 
-			float4x4 unity_ObjectToWorld;
-			float4x4 unity_MatrixVP;
+			// UnityCG's transforms and the instancing macros pick the right eye's matrices when VR draws both eyes in one
+			// pass (single-pass instanced). Without them, objects using this shader would be drawn in one eye only.
+			#include "UnityCG.cginc"
+			#ifndef UNITY_VERTEX_INPUT_INSTANCE_ID
+			#define UNITY_VERTEX_INPUT_INSTANCE_ID
+			#define UNITY_SETUP_INSTANCE_ID(v)
+			#endif
+			#ifndef UNITY_VERTEX_OUTPUT_STEREO
+			#define UNITY_VERTEX_OUTPUT_STEREO
+			#define UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(o)
+			#endif
 
 			struct Vertex_Stage_Input
 			{
 				float4 pos : POSITION;
+				UNITY_VERTEX_INPUT_INSTANCE_ID
 			};
 
 			struct Vertex_Stage_Output
 			{
 				float4 pos : SV_POSITION;
+				UNITY_VERTEX_OUTPUT_STEREO
 			};
 
 			Vertex_Stage_Output vert(Vertex_Stage_Input input)
 			{
 				Vertex_Stage_Output output;
-				output.pos = mul(unity_MatrixVP, mul(unity_ObjectToWorld, input.pos));
+				UNITY_SETUP_INSTANCE_ID(input);
+				UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
+				output.pos = UnityObjectToClipPos(input.pos);
 				return output;
 			}
 
