@@ -16,7 +16,9 @@ namespace AssetRipper.Processing.Assemblies;
 /// buffers, and it generates serialization types in the <c>Fusion.CodeGen</c> namespace. That code accesses internal and
 /// private types, so it can't be compiled from source. This processor:
 /// <list type="bullet">
-/// <item>removes the <c>Fusion.CodeGen</c> types and every member marked with <c>[WeaverGenerated]</c>,</item>
+/// <item>removes the <c>Fusion.CodeGen</c> types and every member marked with <c>[WeaverGenerated]</c>, except the
+/// serialized fields holding networked properties' defaults: those are in every saved component's data, so they stay as
+/// plain <c>[SerializeField]</c> fields,</item>
 /// <item>restores woven <c>[Networked]</c> properties to their source form: auto-properties, or <c>=> default</c> for read-only ones,</item>
 /// <item>removes the code inserted at the start of RPC methods to send them,</item>
 /// <item>removes the attributes marking types and properties as woven, so that the Fusion weaver processes them again if it's installed.</item>
@@ -227,6 +229,10 @@ public sealed class FusionWeavingReversalProcessor(Func<string, bool> shouldProc
 			count += RemoveWhere(type.NestedTypes, IsWeaverGenerated);
 			count += RemoveWhere(type.Properties, IsWeaverGenerated);
 			count += RemoveWhere(type.Methods, m => IsWeaverGenerated(m) || m.CustomAttributes.Any(a => IsFusionAttribute(a, "NetworkRpcWeavedInvokerAttribute")));
+			foreach (FieldDefinition field in type.Fields.Where(f => IsWeaverGenerated(f) && IsSerializedDefault(f)))
+			{
+				RemoveAttributes(field, a => IsFusionAttribute(a, "WeaverGeneratedAttribute") || IsFusionAttribute(a, "DefaultForPropertyAttribute") || IsFusionAttribute(a, "DrawIfAttribute"));
+			}
 			int removedFields = RemoveWhere(type.Fields, IsWeaverGenerated);
 			if (removedFields > 0 && type.IsExplicitLayout)
 			{
@@ -266,6 +272,20 @@ public sealed class FusionWeavingReversalProcessor(Func<string, bool> shouldProc
 	private static bool IsWeaverGenerated(IHasCustomAttribute member)
 	{
 		return member.CustomAttributes.Any(a => IsFusionAttribute(a, "WeaverGeneratedAttribute"));
+	}
+
+	/// <summary>
+	/// Whether a generated field holds the inspector default of a networked property, such as <c>_nickName</c> for <c>nickName</c>.
+	/// </summary>
+	/// <remarks>
+	/// Unity serializes these, so they're part of every saved component's data. Without them the component's layout
+	/// doesn't match its data, and none of its fields can be read.
+	/// </remarks>
+	private static bool IsSerializedDefault(FieldDefinition field)
+	{
+		return !field.IsStatic
+			&& field.CustomAttributes.Any(a => IsFusionAttribute(a, "DefaultForPropertyAttribute"))
+			&& field.CustomAttributes.Any(a => a.IsType("UnityEngine", "SerializeField"));
 	}
 
 	private static bool IsWovenPropertyAttribute(CustomAttribute attribute)
