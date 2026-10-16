@@ -37,6 +37,10 @@ public sealed partial class UnityPackageIndex
 	/// The packages containing each plugin file name, such as a native library, ignoring case.
 	/// </summary>
 	private readonly Dictionary<string, HashSet<string>> pluginPackages;
+	/// <summary>
+	/// Where each extra package was read from (an archive or a directory), by package name.
+	/// </summary>
+	private readonly Dictionary<string, string> extraPackageSources;
 
 	/// <summary>
 	/// The directory of the editor installation that the packages were read from.
@@ -45,7 +49,7 @@ public sealed partial class UnityPackageIndex
 
 	public UnityVersion EditorVersion { get; }
 
-	private UnityPackageIndex(string editorDirectory, UnityVersion editorVersion, Dictionary<string, PackageAssembly> assemblies, Dictionary<string, PackageShader?> shaders, Dictionary<string, PackageResource?> resources, Dictionary<string, HashSet<string>> pluginPackages)
+	private UnityPackageIndex(string editorDirectory, UnityVersion editorVersion, Dictionary<string, PackageAssembly> assemblies, Dictionary<string, PackageShader?> shaders, Dictionary<string, PackageResource?> resources, Dictionary<string, HashSet<string>> pluginPackages, Dictionary<string, string> extraPackageSources)
 	{
 		EditorDirectory = editorDirectory;
 		EditorVersion = editorVersion;
@@ -53,6 +57,7 @@ public sealed partial class UnityPackageIndex
 		this.shaders = shaders;
 		this.resources = resources;
 		this.pluginPackages = pluginPackages;
+		this.extraPackageSources = extraPackageSources;
 		foreach (PackageAssembly assembly in assemblies.Values)
 		{
 			foreach (string typeName in assembly.DeclaredTypes)
@@ -84,6 +89,17 @@ public sealed partial class UnityPackageIndex
 	{
 		resource = resources.GetValueOrDefault(resourceName.ToLowerInvariant());
 		return resource is not null;
+	}
+
+	/// <summary>
+	/// Get the full path of the archive or directory an extra package was read from.
+	/// </summary>
+	/// <remarks>
+	/// The editor's own packages have none, since Unity finds them by version.
+	/// </remarks>
+	public bool TryGetExtraPackageSource(string packageName, [NotNullWhen(true)] out string? path)
+	{
+		return extraPackageSources.TryGetValue(packageName, out path);
 	}
 
 	/// <summary>
@@ -185,7 +201,8 @@ public sealed partial class UnityPackageIndex
 		Dictionary<string, PackageShader?> shaders = new();
 		Dictionary<string, PackageResource?> resources = new();
 		Dictionary<string, HashSet<string>> pluginPackages = new(StringComparer.OrdinalIgnoreCase);
-		PackageTables tables = new(assemblies, shaders, resources, pluginPackages);
+		Dictionary<string, string> extraPackageSources = new();
+		PackageTables tables = new(assemblies, shaders, resources, pluginPackages, extraPackageSources);
 		string builtInDirectory = Path.Join(packageManagerDirectory, "BuiltInPackages");
 		if (Directory.Exists(builtInDirectory))
 		{
@@ -213,7 +230,7 @@ public sealed partial class UnityPackageIndex
 		{
 			AddExtraPackages(tables, extraPackage);
 		}
-		return new UnityPackageIndex(editorDirectory, editorVersion, assemblies, shaders, resources, pluginPackages);
+		return new UnityPackageIndex(editorDirectory, editorVersion, assemblies, shaders, resources, pluginPackages, extraPackageSources);
 	}
 
 	/// <summary>
@@ -226,11 +243,11 @@ public sealed partial class UnityPackageIndex
 		{
 			if (File.Exists(path))
 			{
-				AddPackage(tables, ReadArchive(path));
+				AddPackage(tables, ReadArchive(path), Path.GetFullPath(path));
 			}
 			else if (File.Exists(Path.Join(path, "package.json")))
 			{
-				AddPackage(tables, ReadDirectory(path));
+				AddPackage(tables, ReadDirectory(path), Path.GetFullPath(path));
 			}
 			else if (Directory.Exists(path))
 			{
@@ -276,15 +293,20 @@ public sealed partial class UnityPackageIndex
 		Dictionary<string, PackageAssembly> Assemblies,
 		Dictionary<string, PackageShader?> Shaders,
 		Dictionary<string, PackageResource?> Resources,
-		Dictionary<string, HashSet<string>> PluginPackages);
+		Dictionary<string, HashSet<string>> PluginPackages,
+		Dictionary<string, string> ExtraPackageSources);
 
-	private static void AddPackage(PackageTables tables, PackageContents? contents)
+	private static void AddPackage(PackageTables tables, PackageContents? contents, string? extraPackageSource = null)
 	{
 		if (contents is null)
 		{
 			return;
 		}
-		(Dictionary<string, PackageAssembly> assemblies, Dictionary<string, PackageShader?> shaders, Dictionary<string, PackageResource?> resources, Dictionary<string, HashSet<string>> pluginPackages) = tables;
+		if (extraPackageSource is not null)
+		{
+			tables.ExtraPackageSources.TryAdd(contents.PackageName, extraPackageSource);
+		}
+		(Dictionary<string, PackageAssembly> assemblies, Dictionary<string, PackageShader?> shaders, Dictionary<string, PackageResource?> resources, Dictionary<string, HashSet<string>> pluginPackages, _) = tables;
 		foreach (string fileName in contents.PluginFileNames)
 		{
 			if (!pluginPackages.TryGetValue(fileName, out HashSet<string>? packages))

@@ -167,6 +167,9 @@ internal class UnityPackageIndexTests
 			Assert.That(assembly.TryGetScriptGuid("Extra", "ExtraBehaviour", out UnityGuid guid), Is.True);
 			Assert.That(guid, Is.EqualTo(UnityGuid.Parse(ExtraScriptGuid)));
 			Assert.That(index.TryGetAssembly("Example.Runtime", out _), Is.True, "the editor's packages are still indexed");
+			Assert.That(index.TryGetExtraPackageSource("com.extra.package", out string? source), Is.True);
+			Assert.That(source, Is.EqualTo(Path.GetFullPath(archive)));
+			Assert.That(index.TryGetExtraPackageSource("com.example.package", out _), Is.False, "the editor's packages have no source");
 		}
 
 		static void AddEntry(System.Formats.Tar.TarWriter tar, string name, string text)

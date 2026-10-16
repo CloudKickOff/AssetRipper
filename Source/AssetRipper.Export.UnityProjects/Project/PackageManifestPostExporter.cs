@@ -45,12 +45,26 @@ public class PackageManifestPostExporter : IPostExporter
 		{
 			foreach (PackageAssembly assembly in index.GetReplacements(gameAssembly))
 			{
-				if (manifest.Dependencies.TryAdd(assembly.PackageName, assembly.PackageVersion))
+				string reference = GetReference(assembly, index, settings.ExportSettings.PackageRegistries);
+				if (manifest.Dependencies.TryAdd(assembly.PackageName, reference))
 				{
-					Logger.Info(LogCategory.Export, $"Referencing package {assembly.PackageName} {assembly.PackageVersion}");
+					Logger.Info(LogCategory.Export, $"Referencing package {assembly.PackageName} {reference}");
 				}
 			}
 		}
 		Logger.Info(LogCategory.Export, $"The package versions match Unity {index.EditorVersion}. Open the project with that version.");
+	}
+
+	/// <summary>
+	/// The manifest's reference to a package: its version, which Unity looks up in its own packages or a registry, or,
+	/// for an extra package that no registry provides (one only distributed as a download), its archive or directory.
+	/// </summary>
+	private static string GetReference(PackageAssembly assembly, UnityPackageIndex index, ScopedRegistry[] registries)
+	{
+		string name = assembly.PackageName;
+		bool inRegistry = registries.Any(r => r.Scopes.Any(scope => name == scope || name.StartsWith(scope + ".", StringComparison.Ordinal)));
+		return !inRegistry && index.TryGetExtraPackageSource(name, out string? path)
+			? "file:" + path.Replace('\\', '/')
+			: assembly.PackageVersion;
 	}
 }
