@@ -1,6 +1,7 @@
 using AsmResolver.DotNet;
 using AssetRipper.Assets;
 using AssetRipper.Export.UnityProjects.Scripts.AssemblyDefinitions;
+using AssetRipper.Export.UnityProjects.Scripts.UnityPackages;
 using AssetRipper.Import.Logging;
 using AssetRipper.Import.Structure.Assembly;
 using AssetRipper.Import.Structure.Assembly.Managers;
@@ -40,7 +41,7 @@ public sealed class ScriptExportCollection : ScriptExportCollectionBase
 
 	private bool ShouldExport(IMonoScript script)
 	{
-		if (AssetExporter.GetExportType(script) is AssemblyExportType.Decompile)
+		if (AssetExporter.GetExportType(script) is AssemblyExportType.Decompile || AssetExporter.IsKeptScript(script))
 		{
 			return script.IsScriptPresents(AssetExporter.AssemblyManager);
 		}
@@ -59,6 +60,7 @@ public sealed class ScriptExportCollection : ScriptExportCollectionBase
 		Dictionary<string, AssemblyDefinitionDetails> assemblyDefinitionDetailsDictionary = new();
 
 		string pluginsFolder = fileSystem.Path.Join(assetsDirectoryPath, "Plugins");
+		HashSet<string> keptAssemblies = new();
 
 		foreach (AssemblyDefinition assembly in AssetExporter.AssemblyManager.GetAssemblies())
 		{
@@ -73,6 +75,15 @@ public sealed class ScriptExportCollection : ScriptExportCollectionBase
 				AssetExporter.Decompiler.DecompileWholeProject(assembly, outputDirectory, fileSystem);
 
 				assemblyDefinitionDetailsDictionary.TryAdd(assemblyName, new AssemblyDefinitionDetails(assembly, outputDirectory));
+			}
+			else if (exportType is AssemblyExportType.Package && AssetExporter.TryGetKeptTypesTarget(assemblyName, out PackageAssembly? target, out IReadOnlySet<string>? keptTypes))
+			{
+				Logger.Info(LogCategory.Export, $"Decompiling the types of {assemblyName} missing from {target.PackageName}");
+				string outputDirectory = fileSystem.Path.Join(assetsDirectoryPath, GetScriptsFolderName(assemblyName), assemblyName);
+				fileSystem.Directory.Create(outputDirectory);
+				AssetExporter.Decompiler.DecompileTypes(assembly, outputDirectory, fileSystem, keptTypes.Contains);
+				AssemblyDefinitionExporter.ExportReference(outputDirectory, target.AssemblyName, fileSystem);
+				keptAssemblies.Add(assemblyName);
 			}
 			else if (exportType is AssemblyExportType.Save)
 			{
@@ -94,7 +105,8 @@ public sealed class ScriptExportCollection : ScriptExportCollectionBase
 				fileSystem.Directory.Create(folderPath);
 				fileSystem.File.WriteAllText(filePath, EmptyScript.GetContent(asset));
 				string assemblyName = asset.GetAssemblyNameFixed();
-				if (!assemblyDefinitionDetailsDictionary.ContainsKey(assemblyName))
+				// Kept types are compiled into their package's assembly, so they need no assembly definition of their own.
+				if (!keptAssemblies.Contains(assemblyName) && !assemblyDefinitionDetailsDictionary.ContainsKey(assemblyName))
 				{
 					string assemblyDirectoryPath = fileSystem.Path.Join(assetsDirectoryPath, GetScriptsFolderName(assemblyName), assemblyName);
 					AssemblyDefinitionDetails details = new AssemblyDefinitionDetails(assemblyName, assemblyDirectoryPath);

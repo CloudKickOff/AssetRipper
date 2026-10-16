@@ -97,6 +97,13 @@ public sealed record class ExportSettings
 	/// </summary>
 	public ScopedRegistry[] PackageRegistries { get; set; } = [];
 
+	/// <summary>
+	/// Game assemblies replaced by a package whose types that the package doesn't have are kept: they're decompiled and
+	/// compiled into the package's assembly (with an assembly definition reference), so code and components using them
+	/// still work. For a game built with a version of a package that isn't available, whose newer version dropped types.
+	/// </summary>
+	public string[] KeepTypesMissingFromPackages { get; set; } = [];
+
 	public bool SaveSettingsToDisk { get; set; }
 
 	public string? LanguageCode { get; set; }

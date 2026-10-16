@@ -67,6 +67,15 @@ public sealed partial class UnityPackageIndex
 		}
 	}
 
+	/// <summary>
+	/// Whether a package declares a type, by full name (generic arity, as in "List`1", is ignored).
+	/// </summary>
+	public bool DeclaresType(string fullName)
+	{
+		int arity = fullName.IndexOf('`');
+		return typeOwners.ContainsKey(arity < 0 ? fullName : fullName[..arity]);
+	}
+
 	public bool TryGetAssembly(string assemblyName, [NotNullWhen(true)] out PackageAssembly? assembly)
 	{
 		return assemblies.TryGetValue(assemblyName, out assembly);
@@ -616,22 +625,18 @@ public sealed partial class UnityPackageIndex
 	/// Find the namespace of the type declared with <paramref name="className"/>.
 	/// </summary>
 	/// <remarks>
-	/// This is a lightweight scan rather than a full parse. It takes the last namespace declared before the type,
-	/// which is correct for the one namespace per file that Unity packages use.
+	/// This is a lightweight scan rather than a full parse; see <see cref="GetNamespaceScopes"/>.
 	/// </remarks>
 	private static bool TryFindNamespace(string source, string className, [NotNullWhen(true)] out string? @namespace)
 	{
-		Match typeMatch = Regex.Match(source, $@"\b(?:class|struct|interface|enum|record)\s+{Regex.Escape(className)}\b");
+		string code = BlankCommentsAndStrings(source);
+		Match typeMatch = Regex.Match(code, $@"\b(?:class|struct|interface|enum|record)\s+{Regex.Escape(className)}\b");
 		if (!typeMatch.Success)
 		{
 			@namespace = null;
 			return false;
 		}
-		@namespace = "";
-		foreach (Match match in NamespaceRegex().Matches(source[..typeMatch.Index]))
-		{
-			@namespace = match.Groups[1].Value;
-		}
+		@namespace = GetNamespaceAt(GetNamespaceScopes(code), typeMatch.Index);
 		return true;
 	}
 
@@ -639,22 +644,133 @@ public sealed partial class UnityPackageIndex
 	/// Find the full names of the types declared in a source file.
 	/// </summary>
 	/// <remarks>
-	/// Like <see cref="TryFindNamespace"/>, this is a lightweight scan. Each type is given the last namespace declared before it,
-	/// and nested types are treated as top level. It's only used to estimate how much of an assembly a package declares.
+	/// Like <see cref="TryFindNamespace"/>, this is a lightweight scan. Nested types are treated as top level.
 	/// </remarks>
 	private static IEnumerable<string> FindDeclaredTypes(string source)
 	{
-		MatchCollection namespaces = NamespaceRegex().Matches(source);
-		int namespaceIndex = -1;
-		foreach (Match type in TypeDeclarationRegex().Matches(source))
+		string code = BlankCommentsAndStrings(source);
+		List<(int Start, int End, string Name)> scopes = GetNamespaceScopes(code);
+		foreach (Match type in TypeDeclarationRegex().Matches(code))
 		{
-			while (namespaceIndex + 1 < namespaces.Count && namespaces[namespaceIndex + 1].Index < type.Index)
-			{
-				namespaceIndex++;
-			}
-			string @namespace = namespaceIndex >= 0 ? namespaces[namespaceIndex].Groups[1].Value : "";
-			yield return GetFullName(@namespace, type.Groups[1].Value);
+			yield return GetFullName(GetNamespaceAt(scopes, type.Index), type.Groups[1].Value);
 		}
+	}
+
+	/// <summary>
+	/// The namespace declarations of a file and the text they cover: to its end for a file-scoped one, otherwise to
+	/// the brace closing its block. Namespaces can be nested, as in "namespace A { namespace B { } class C { } }".
+	/// </summary>
+	/// <param name="code">The source, with comments and strings blanked.</param>
+	private static List<(int Start, int End, string Name)> GetNamespaceScopes(string code)
+	{
+		List<(int Start, int End, string Name)> scopes = new();
+		foreach (Match match in NamespaceRegex().Matches(code))
+		{
+			int next = match.Index + match.Length;
+			while (next < code.Length && char.IsWhiteSpace(code[next]))
+			{
+				next++;
+			}
+			if (next >= code.Length || code[next] == ';')
+			{
+				scopes.Add((match.Index, code.Length, match.Groups[1].Value));
+				continue;
+			}
+			if (code[next] != '{')
+			{
+				continue;
+			}
+			int depth = 0;
+			int end = code.Length;
+			for (int i = next; i < code.Length; i++)
+			{
+				if (code[i] == '{')
+				{
+					depth++;
+				}
+				else if (code[i] == '}' && --depth == 0)
+				{
+					end = i;
+					break;
+				}
+			}
+			scopes.Add((match.Index, end, match.Groups[1].Value));
+		}
+		return scopes;
+	}
+
+	private static string GetNamespaceAt(List<(int Start, int End, string Name)> scopes, int index)
+	{
+		return string.Join('.', scopes.Where(s => s.Start < index && index < s.End).OrderBy(s => s.Start).Select(s => s.Name));
+	}
+
+	/// <summary>
+	/// Replace comments and string and character literals with spaces, keeping every other character where it is,
+	/// so that braces and keywords inside them aren't mistaken for code.
+	/// </summary>
+	internal static string BlankCommentsAndStrings(string source)
+	{
+		char[] code = source.ToCharArray();
+		int i = 0;
+		while (i < code.Length)
+		{
+			int start = i;
+			if (code[i] == '/' && i + 1 < code.Length && code[i + 1] == '/')
+			{
+				while (i < code.Length && code[i] != '\n')
+				{
+					i++;
+				}
+			}
+			else if (code[i] == '/' && i + 1 < code.Length && code[i + 1] == '*')
+			{
+				int close = source.IndexOf("*/", i + 2, StringComparison.Ordinal);
+				i = close < 0 ? code.Length : close + 2;
+			}
+			else if (code[i] is '"' or '\'')
+			{
+				bool verbatim = code[i] == '"' && (i > 0 && code[i - 1] == '@' || i > 1 && code[i - 1] == '$' && code[i - 2] == '@');
+				char quote = code[i];
+				i++;
+				while (i < code.Length)
+				{
+					if (verbatim && code[i] == '"')
+					{
+						if (i + 1 < code.Length && code[i + 1] == '"')
+						{
+							i += 2;
+							continue;
+						}
+						i++;
+						break;
+					}
+					if (!verbatim && code[i] == '\\')
+					{
+						i += 2;
+						continue;
+					}
+					if (!verbatim && (code[i] == quote || code[i] == '\n'))
+					{
+						i++;
+						break;
+					}
+					i++;
+				}
+			}
+			else
+			{
+				i++;
+				continue;
+			}
+			for (int j = start; j < Math.Min(i, code.Length); j++)
+			{
+				if (code[j] != '\n')
+				{
+					code[j] = ' ';
+				}
+			}
+		}
+		return new string(code);
 	}
 
 	[GeneratedRegex(@"\b(?:class|struct|interface|enum|record)\s+(\w+)")]

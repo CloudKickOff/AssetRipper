@@ -39,6 +39,10 @@ public class ScriptExporter : IAssetExporter
 					if (replacements.Count > 0)
 					{
 						packageReplacements[assembly.Name!] = replacements;
+						if (configuration.ExportSettings.KeepTypesMissingFromPackages.Contains(assembly.Name!.Value))
+						{
+							AddKeptTypes(assembly, replacements, PackageIndex);
+						}
 					}
 				}
 			}
@@ -60,6 +64,11 @@ public class ScriptExporter : IAssetExporter
 	/// </summary>
 	private readonly Dictionary<string, IReadOnlyList<PackageAssembly>> packageReplacements = new();
 	private readonly HashSet<string> missingPackageScripts = new();
+	/// <summary>
+	/// For each game assembly in <see cref="ExportSettings.KeepTypesMissingFromPackages"/>, the package assembly its kept
+	/// types are compiled into, and the full names of those top level types.
+	/// </summary>
+	private readonly Dictionary<string, (PackageAssembly Target, HashSet<string> Types)> keptTypes = new();
 	internal ScriptDecompiler Decompiler { get; }
 	internal Dictionary<string, UnityGuid> ReferenceAssemblyDictionary { get; }
 	private bool HasDecompiled { get; set; } = false;
@@ -94,6 +103,68 @@ public class ScriptExporter : IAssetExporter
 		}
 	}
 
+	private void AddKeptTypes(AsmResolver.DotNet.AssemblyDefinition assembly, IReadOnlyList<PackageAssembly> replacements, UnityPackageIndex index)
+	{
+		string name = assembly.Name!;
+		// The kept types need the package assembly's internals, which only the assembly itself can see.
+		PackageAssembly? target = replacements.FirstOrDefault(a => a.AssemblyName == name);
+		if (target is null)
+		{
+			Logger.Warning(LogCategory.Export, $"{name} isn't replaced by a package assembly of the same name, so its types missing from the package can't be kept.");
+			return;
+		}
+		HashSet<string> types = assembly.ManifestModule?.TopLevelTypes
+			.Where(t => t.Name?.Value is { } n && n != "<Module>" && !n.StartsWith('<'))
+			.Select(t => t.FullName)
+			.Where(fullName => !index.DeclaresType(fullName))
+			.ToHashSet() ?? [];
+		if (types.Count > 0)
+		{
+			keptTypes.Add(name, (target, types));
+			Logger.Info(LogCategory.Export, $"Keeping {types.Count} types of {name} that {target.PackageName} {target.PackageVersion} doesn't have: {string.Join(", ", types.Order())}");
+		}
+	}
+
+	/// <summary>
+	/// Whether a type of a game assembly replaced by a package is kept (see <see cref="ExportSettings.KeepTypesMissingFromPackages"/>).
+	/// </summary>
+	public bool IsKeptType(string assemblyName, string fullName)
+	{
+		return keptTypes.TryGetValue(assemblyName, out (PackageAssembly Target, HashSet<string> Types) kept) && kept.Types.Contains(fullName);
+	}
+
+	/// <summary>
+	/// The package assembly that the kept types of a game assembly are compiled into, if any of its types are kept.
+	/// </summary>
+	public bool TryGetKeptTypesTarget(string assemblyName, [NotNullWhen(true)] out PackageAssembly? target, [NotNullWhen(true)] out IReadOnlySet<string>? types)
+	{
+		if (keptTypes.TryGetValue(assemblyName, out (PackageAssembly Target, HashSet<string> Types) kept))
+		{
+			(target, types) = (kept.Target, kept.Types);
+			return true;
+		}
+		(target, types) = (null, null);
+		return false;
+	}
+
+	/// <summary>
+	/// Whether a script's class is a kept type of a game assembly replaced by a package, so it's decompiled.
+	/// </summary>
+	public bool IsKeptScript(IMonoScript script)
+	{
+		return IsKeptType(script.GetAssemblyNameFixed(), GetTopLevelFullName(script));
+	}
+
+	private static string GetTopLevelFullName(IMonoScript script)
+	{
+		// A nested class's MonoScript names the outer class first, separated by a slash or a dot.
+		string className = script.GetNonGenericClassName();
+		int nested = className.IndexOfAny(['/', '+']);
+		string topLevel = nested < 0 ? className : className[..nested];
+		string @namespace = script.Namespace.String;
+		return @namespace.Length == 0 ? topLevel : $"{@namespace}.{topLevel}";
+	}
+
 	public AssemblyExportType GetExportType(IMonoScript script)
 	{
 		return GetExportType(script.GetAssemblyNameFixed());
@@ -123,6 +194,10 @@ public class ScriptExporter : IAssetExporter
 				// Like decompiled scripts, a script file in a package has the main object of the MonoScript class.
 				return new(MonoScriptDecompiledFileID, guid, AssetType.Meta);
 			}
+		}
+		if (IsKeptScript(script))
+		{
+			return new(MonoScriptDecompiledFileID, ScriptHashing.CalculateScriptGuid(script), AssetType.Meta);
 		}
 
 		lock (missingPackageScripts)

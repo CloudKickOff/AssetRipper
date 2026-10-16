@@ -5,6 +5,17 @@ namespace AssetRipper.Export.UnityProjects.Scripts.AssemblyDefinitions;
 
 public static class AssemblyDefinitionExporter
 {
+	/// <summary>
+	/// Write an assembly definition reference, which compiles the scripts in <paramref name="folder"/> into another
+	/// assembly, such as one in a package.
+	/// </summary>
+	public static void ExportReference(string folder, string assemblyName, FileSystem fileSystem)
+	{
+		string assetPath = fileSystem.Path.Join(folder, $"{assemblyName}.asmref");
+		// Written by hand: reflection-based serialization is disabled in trimmed builds. Assembly names need no escaping.
+		fileSystem.File.WriteAllText(assetPath, $"{{\n\t\"reference\": \"{assemblyName}\"\n}}\n");
+	}
+
 	/// <param name="getReferenceNames">
 	/// Gets the assembly definition names to reference for an assembly that the exported one references.
 	/// Engine assemblies and plugins are referenced automatically, so they have none.

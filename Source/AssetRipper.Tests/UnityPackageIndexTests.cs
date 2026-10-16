@@ -50,6 +50,18 @@ internal class UnityPackageIndexTests
 		Write(package, "Runtime/Resources/Styles.meta", "fileFormatVersion: 2\nguid: 00000000000000000000000000000001\n");
 		Write(package, "Runtime/MyResources/NotAResource.asset.meta", "fileFormatVersion: 2\nguid: 00000000000000000000000000000002\n");
 		Write(package, "Runtime/Plugins/x86_64/ExampleNative.dll", "");
+		// Nested namespaces, and a namespace and a class that are only in a comment and a string
+		Write(package, "Runtime/Core/Core.cs", """
+			namespace Example.Core
+			{
+				namespace FFI
+				{
+					internal static class Native { const string Text = "} namespace Fake { class Fake"; }
+				}
+				// namespace Commented { class Commented }
+				public static class Core { }
+			}
+			""");
 		Write(package, "Samples~/Plugins/SampleNative.dll", "");
 
 		static void Write(string root, string relativePath, string text)
@@ -179,6 +191,21 @@ internal class UnityPackageIndexTests
 				DataStream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(text)),
 			};
 			tar.WriteEntry(entry);
+		}
+	}
+
+	[Test]
+	public void TypesAreDeclaredInTheirNestedNamespaces()
+	{
+		UnityPackageIndex index = UnityPackageIndex.Load(editorDirectory, new UnityVersion(6000, 3));
+		using (Assert.EnterMultipleScope())
+		{
+			Assert.That(index.DeclaresType("Example.Core.FFI.Native"), Is.True);
+			Assert.That(index.DeclaresType("Example.Core.Core"), Is.True, "the namespace ends with its block");
+			Assert.That(index.DeclaresType("Example.Core.FFI.Core"), Is.False);
+			Assert.That(index.DeclaresType("Example.Core.FFI.Fake"), Is.False, "strings aren't code");
+			Assert.That(index.DeclaresType("Example.Core.Commented"), Is.False, "comments aren't code");
+			Assert.That(index.DeclaresType("Example.Components.ExampleBehaviour"), Is.True);
 		}
 	}
 
