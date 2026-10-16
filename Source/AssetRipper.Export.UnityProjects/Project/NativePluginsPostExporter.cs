@@ -37,7 +37,7 @@ public class NativePluginsPostExporter : IPostExporter
 		UnityPackageIndex? packageIndex = null;
 		if (settings.ExportSettings.ReferenceUnityPackages && gameData.AssemblyManager.IsSet)
 		{
-			packageIndex = UnityPackageIndex.GetForProject(settings.Version, settings.ExportSettings.UnityEditorPath);
+			packageIndex = UnityPackageIndex.GetForProject(settings.Version, settings.ExportSettings);
 			if (packageIndex is not null)
 			{
 				referencedPackages = packageIndex.GetReferencedPackageNames(gameData.AssemblyManager.GetAssemblies());

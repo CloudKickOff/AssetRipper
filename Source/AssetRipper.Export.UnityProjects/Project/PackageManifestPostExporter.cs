@@ -14,6 +14,10 @@ public class PackageManifestPostExporter : IPostExporter
 		string path = fileSystem.Path.Join(packagesDirectory, "manifest.json");
 		PackageManifest manifest = CreateManifest(settings.Version);
 		AddReferencedPackages(manifest, gameData, settings);
+		if (settings.ExportSettings.PackageRegistries.Length > 0)
+		{
+			manifest.ScopedRegistries = settings.ExportSettings.PackageRegistries.ToList();
+		}
 		using Stream stream = fileSystem.File.Create(path);
 		manifest.Save(stream);
 	}
@@ -32,7 +36,7 @@ public class PackageManifestPostExporter : IPostExporter
 		{
 			return;
 		}
-		UnityPackageIndex? index = UnityPackageIndex.GetForProject(settings.Version, settings.ExportSettings.UnityEditorPath);
+		UnityPackageIndex? index = UnityPackageIndex.GetForProject(settings.Version, settings.ExportSettings);
 		if (index is null)
 		{
 			return;

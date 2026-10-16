@@ -149,7 +149,7 @@ partial class ProjectExporter
 		OverrideExporter<IShader>(new SimpleShaderExporter());
 		if (settings.ExportSettings.ReferenceUnityPackages
 			&& assemblyManager.IsSet
-			&& UnityPackageIndex.GetForProject(settings.Version, settings.ExportSettings.UnityEditorPath) is { } packageIndex)
+			&& UnityPackageIndex.GetForProject(settings.Version, settings.ExportSettings) is { } packageIndex)
 		{
 			OverrideExporter<IShader>(new PackageShaderExporter(packageIndex, packageIndex.GetReferencedPackageNames(assemblyManager.GetAssemblies())));
 		}
@@ -187,6 +187,14 @@ partial class ProjectExporter
 		ScriptableObjectGroupExporter scriptableObjectGroupExporter = new();
 		OverrideExporter<IMonoBehaviour>(scriptableObjectGroupExporter);
 		OverrideExporter<ScriptableObjectGroup>(scriptableObjectGroupExporter);
+
+		//Copies of package resources, tried before the exporters above
+		if (settings.ExportSettings.ReferenceUnityPackages
+			&& assemblyManager.IsSet
+			&& UnityPackageIndex.GetForProject(settings.Version, settings.ExportSettings) is { } resourcePackageIndex)
+		{
+			OverrideExporter<IUnityObjectBase>(new PackageResourceExporter(resourcePackageIndex, resourcePackageIndex.GetReferencedPackageNames(assemblyManager.GetAssemblies())));
+		}
 	}
 
 	//These need to be absolutely last

@@ -10,6 +10,8 @@ internal class UnityPackageIndexTests
 	private const string SampleScriptGuid = "00112233445566778899aabbccddeeff";
 	private const string AssemblyDefinitionGuid = "aaaabbbbccccddddeeeeffff00001111";
 	private const string ShaderGuid = "11112222333344445555666677778888";
+	private const string ResourceGuid = "99990000aaaabbbbccccddddeeeeffff";
+	private const string ExtraScriptGuid = "abcdefabcdefabcdefabcdefabcdefab";
 
 	private string editorDirectory = "";
 
@@ -43,6 +45,10 @@ internal class UnityPackageIndexTests
 		Write(package, "Shaders/Copy2.shader", "Shader \"Example/Duplicate\" { }\n");
 		Write(package, "Shaders/Copy2.shader.meta", $"fileFormatVersion: 2\nguid: {ReferencedScriptGuid}\n");
 
+		Write(package, "Runtime/Resources/Styles/Panel.asset", "");
+		Write(package, "Runtime/Resources/Styles/Panel.asset.meta", $"fileFormatVersion: 2\nguid: {ResourceGuid}\n");
+		Write(package, "Runtime/Resources/Styles.meta", "fileFormatVersion: 2\nguid: 00000000000000000000000000000001\n");
+		Write(package, "Runtime/MyResources/NotAResource.asset.meta", "fileFormatVersion: 2\nguid: 00000000000000000000000000000002\n");
 		Write(package, "Runtime/Plugins/x86_64/ExampleNative.dll", "");
 		Write(package, "Samples~/Plugins/SampleNative.dll", "");
 
@@ -121,6 +127,55 @@ internal class UnityPackageIndexTests
 			Assert.That(index.HasPluginFile("examplenative.dll", new HashSet<string> { "com.example.package" }), Is.True);
 			Assert.That(index.HasPluginFile("ExampleNative.dll", new HashSet<string> { "com.other.package" }), Is.False);
 			Assert.That(index.HasPluginFile("SampleNative.dll", new HashSet<string> { "com.example.package" }), Is.False);
+		}
+	}
+
+	[Test]
+	public void ResourcesAreMappedByTheirNameInsideTheResourcesFolder()
+	{
+		UnityPackageIndex index = UnityPackageIndex.Load(editorDirectory, new UnityVersion(6000, 3));
+		using (Assert.EnterMultipleScope())
+		{
+			Assert.That(index.TryGetResource("Styles/Panel", out PackageResource? resource), Is.True);
+			Assert.That(resource!.Guid, Is.EqualTo(UnityGuid.Parse(ResourceGuid)));
+			Assert.That(resource.PackageName, Is.EqualTo("com.example.package"));
+			Assert.That(index.TryGetResource("Styles", out _), Is.False, "folders aren't resources");
+			Assert.That(index.TryGetResource("NotAResource", out _), Is.False, "MyResources isn't a Resources folder");
+		}
+	}
+
+	[Test]
+	public void ExtraPackageArchivesAreIndexed()
+	{
+		string archive = Path.Join(editorDirectory, "com.extra.package-2.0.0.tgz");
+		using (FileStream file = File.Create(archive))
+		using (System.IO.Compression.GZipStream gzip = new(file, System.IO.Compression.CompressionLevel.Fastest))
+		using (System.Formats.Tar.TarWriter tar = new(gzip))
+		{
+			AddEntry(tar, "package/package.json", """{ "name": "com.extra.package", "version": "2.0.0" }""");
+			AddEntry(tar, "package/Runtime/Extra.asmdef", """{ "name": "Extra.Runtime" }""");
+			AddEntry(tar, "package/Runtime/ExtraBehaviour.cs", "namespace Extra { public class ExtraBehaviour : UnityEngine.MonoBehaviour { } }\n");
+			AddEntry(tar, "package/Runtime/ExtraBehaviour.cs.meta", $"fileFormatVersion: 2\nguid: {ExtraScriptGuid}\n");
+		}
+
+		UnityPackageIndex index = UnityPackageIndex.Load(editorDirectory, new UnityVersion(6000, 3), [archive]);
+		Assert.That(index.TryGetAssembly("Extra.Runtime", out PackageAssembly? assembly), Is.True);
+		using (Assert.EnterMultipleScope())
+		{
+			Assert.That(assembly!.PackageName, Is.EqualTo("com.extra.package"));
+			Assert.That(assembly.PackageVersion, Is.EqualTo("2.0.0"));
+			Assert.That(assembly.TryGetScriptGuid("Extra", "ExtraBehaviour", out UnityGuid guid), Is.True);
+			Assert.That(guid, Is.EqualTo(UnityGuid.Parse(ExtraScriptGuid)));
+			Assert.That(index.TryGetAssembly("Example.Runtime", out _), Is.True, "the editor's packages are still indexed");
+		}
+
+		static void AddEntry(System.Formats.Tar.TarWriter tar, string name, string text)
+		{
+			System.Formats.Tar.PaxTarEntry entry = new(System.Formats.Tar.TarEntryType.RegularFile, name)
+			{
+				DataStream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(text)),
+			};
+			tar.WriteEntry(entry);
 		}
 	}
 

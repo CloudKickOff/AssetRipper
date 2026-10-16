@@ -26,7 +26,7 @@ public class ScriptExporter : IAssetExporter
 		ReferenceAssemblyDictionary = ReferenceAssemblies.GetReferenceAssemblies(AssemblyManager, configuration.Version);
 		if (configuration.ExportSettings.ReferenceUnityPackages && AssemblyManager.IsSet)
 		{
-			PackageIndex = UnityPackageIndex.GetForProject(configuration.Version, configuration.ExportSettings.UnityEditorPath);
+			PackageIndex = UnityPackageIndex.GetForProject(configuration.Version, configuration.ExportSettings);
 			if (PackageIndex is null)
 			{
 				Logger.Warning(LogCategory.Export, $"No Unity editor installation was found for {configuration.Version}, so package assemblies will be exported as plugins.");

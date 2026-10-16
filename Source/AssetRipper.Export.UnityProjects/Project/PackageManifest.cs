@@ -5,6 +5,10 @@ namespace AssetRipper.Export.UnityProjects.Project;
 
 public record class PackageManifest([property: JsonPropertyName("dependencies")] Dictionary<string, string> Dependencies)
 {
+	[JsonPropertyName("scopedRegistries")]
+	[JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+	public List<AssetRipper.Export.Configuration.ScopedRegistry>? ScopedRegistries { get; set; }
+
 	public PackageManifest() : this(new Dictionary<string, string>())
 	{
 	}

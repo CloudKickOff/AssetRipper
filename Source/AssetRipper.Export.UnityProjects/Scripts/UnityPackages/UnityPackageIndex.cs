@@ -1,3 +1,4 @@
+using AssetRipper.Export.Configuration;
 using AssetRipper.Import.Logging;
 using System.Formats.Tar;
 using System.IO.Compression;
@@ -13,7 +14,8 @@ namespace AssetRipper.Export.UnityProjects.Scripts.UnityPackages;
 /// Each assembly defined by a package is mapped to the package and to the guids of its script files,
 /// so that game assemblies built from a package can be replaced with a reference to that package.
 /// Shader files are indexed by the shader name they declare, so that game shaders compiled from a package
-/// can be replaced in the same way.
+/// can be replaced in the same way. Files in Resources folders are indexed by resource name, so that game assets
+/// that are copies of them can be replaced too.
 /// </remarks>
 public sealed partial class UnityPackageIndex
 {
@@ -27,6 +29,11 @@ public sealed partial class UnityPackageIndex
 	/// </summary>
 	private readonly Dictionary<string, PackageShader?> shaders;
 	/// <summary>
+	/// The package file for each resource name (the path inside a Resources folder, without extension, in lower case),
+	/// or null if several files have it.
+	/// </summary>
+	private readonly Dictionary<string, PackageResource?> resources;
+	/// <summary>
 	/// The packages containing each plugin file name, such as a native library, ignoring case.
 	/// </summary>
 	private readonly Dictionary<string, HashSet<string>> pluginPackages;
@@ -38,12 +45,13 @@ public sealed partial class UnityPackageIndex
 
 	public UnityVersion EditorVersion { get; }
 
-	private UnityPackageIndex(string editorDirectory, UnityVersion editorVersion, Dictionary<string, PackageAssembly> assemblies, Dictionary<string, PackageShader?> shaders, Dictionary<string, HashSet<string>> pluginPackages)
+	private UnityPackageIndex(string editorDirectory, UnityVersion editorVersion, Dictionary<string, PackageAssembly> assemblies, Dictionary<string, PackageShader?> shaders, Dictionary<string, PackageResource?> resources, Dictionary<string, HashSet<string>> pluginPackages)
 	{
 		EditorDirectory = editorDirectory;
 		EditorVersion = editorVersion;
 		this.assemblies = assemblies;
 		this.shaders = shaders;
+		this.resources = resources;
 		this.pluginPackages = pluginPackages;
 		foreach (PackageAssembly assembly in assemblies.Values)
 		{
@@ -66,6 +74,16 @@ public sealed partial class UnityPackageIndex
 	{
 		shader = shaders.GetValueOrDefault(shaderName);
 		return shader is not null;
+	}
+
+	/// <summary>
+	/// Get the package file that has a resource name, if exactly one package file has it.
+	/// </summary>
+	/// <param name="resourceName">The path inside a Resources folder, without extension.</param>
+	public bool TryGetResource(string resourceName, [NotNullWhen(true)] out PackageResource? resource)
+	{
+		resource = resources.GetValueOrDefault(resourceName.ToLowerInvariant());
+		return resource is not null;
 	}
 
 	/// <summary>
@@ -123,44 +141,57 @@ public sealed partial class UnityPackageIndex
 	private static readonly Dictionary<string, UnityPackageIndex> cache = new();
 
 	/// <summary>
+	/// Get the package index for a project, using the editor and the extra packages in the export settings.
+	/// </summary>
+	public static UnityPackageIndex? GetForProject(UnityVersion projectVersion, ExportSettings exportSettings)
+	{
+		return GetForProject(projectVersion, exportSettings.UnityEditorPath, exportSettings.ExtraPackages);
+	}
+
+	/// <summary>
 	/// Get the package index of the editor to use for a project, or null if no editor was found.
 	/// </summary>
 	/// <remarks>
-	/// Reading the packages takes a while, so the index is cached for each editor.
+	/// Reading the packages takes a while, so the index is cached for each editor and set of extra packages.
 	/// </remarks>
-	public static UnityPackageIndex? GetForProject(UnityVersion projectVersion, string? configuredEditorPath)
+	/// <param name="extraPackages">Packages to index in addition to the editor's, see <see cref="ExportSettings.ExtraPackages"/>.</param>
+	public static UnityPackageIndex? GetForProject(UnityVersion projectVersion, string? configuredEditorPath, IReadOnlyList<string>? extraPackages = null)
 	{
+		extraPackages ??= [];
 		if (!UnityEditorLocator.TryFind(projectVersion, configuredEditorPath, out string? editorDirectory, out UnityVersion editorVersion))
 		{
 			return null;
 		}
 		lock (cache)
 		{
-			if (!cache.TryGetValue(editorDirectory, out UnityPackageIndex? index))
+			string cacheKey = string.Join('\n', extraPackages.Prepend(editorDirectory));
+			if (!cache.TryGetValue(cacheKey, out UnityPackageIndex? index))
 			{
 				Logger.Info(LogCategory.Export, $"Reading the packages bundled with Unity {editorVersion} at '{editorDirectory}'...");
-				index = Load(editorDirectory, editorVersion);
+				index = Load(editorDirectory, editorVersion, extraPackages);
 				Logger.Info(LogCategory.Export, $"Found {index.assemblies.Count} package assemblies");
-				cache.Add(editorDirectory, index);
+				cache.Add(cacheKey, index);
 			}
 			return index;
 		}
 	}
 
-	public static UnityPackageIndex Load(string editorDirectory, UnityVersion editorVersion)
+	public static UnityPackageIndex Load(string editorDirectory, UnityVersion editorVersion, IReadOnlyList<string>? extraPackages = null)
 	{
 		string packageManagerDirectory = GetPackageManagerDirectory(editorDirectory)
 			?? throw new DirectoryNotFoundException($"No package manager directory was found in '{editorDirectory}'.");
 
 		Dictionary<string, PackageAssembly> assemblies = new();
 		Dictionary<string, PackageShader?> shaders = new();
+		Dictionary<string, PackageResource?> resources = new();
 		Dictionary<string, HashSet<string>> pluginPackages = new(StringComparer.OrdinalIgnoreCase);
+		PackageTables tables = new(assemblies, shaders, resources, pluginPackages);
 		string builtInDirectory = Path.Join(packageManagerDirectory, "BuiltInPackages");
 		if (Directory.Exists(builtInDirectory))
 		{
 			foreach (string packageDirectory in Directory.EnumerateDirectories(builtInDirectory))
 			{
-				AddPackage(assemblies, shaders, pluginPackages, ReadDirectory(packageDirectory));
+				AddPackage(tables, ReadDirectory(packageDirectory));
 			}
 		}
 		string archiveDirectory = Path.Join(packageManagerDirectory, "Editor");
@@ -170,7 +201,7 @@ public sealed partial class UnityPackageIndex
 			{
 				try
 				{
-					AddPackage(assemblies, shaders, pluginPackages, ReadArchive(archivePath));
+					AddPackage(tables, ReadArchive(archivePath));
 				}
 				catch (Exception ex) when (ex is IOException or InvalidDataException or JsonException)
 				{
@@ -178,7 +209,52 @@ public sealed partial class UnityPackageIndex
 				}
 			}
 		}
-		return new UnityPackageIndex(editorDirectory, editorVersion, assemblies, shaders, pluginPackages);
+		foreach (string extraPackage in extraPackages ?? [])
+		{
+			AddExtraPackages(tables, extraPackage);
+		}
+		return new UnityPackageIndex(editorDirectory, editorVersion, assemblies, shaders, resources, pluginPackages);
+	}
+
+	/// <summary>
+	/// Add packages that don't come with the editor: a package archive (.tgz, as published to npm registries),
+	/// a package directory (containing package.json), or a directory of those.
+	/// </summary>
+	private static void AddExtraPackages(PackageTables tables, string path)
+	{
+		try
+		{
+			if (File.Exists(path))
+			{
+				AddPackage(tables, ReadArchive(path));
+			}
+			else if (File.Exists(Path.Join(path, "package.json")))
+			{
+				AddPackage(tables, ReadDirectory(path));
+			}
+			else if (Directory.Exists(path))
+			{
+				foreach (string archivePath in Directory.EnumerateFiles(path, "*.tgz").Order(StringComparer.Ordinal))
+				{
+					AddExtraPackages(tables, archivePath);
+				}
+				foreach (string packageDirectory in Directory.EnumerateDirectories(path).Order(StringComparer.Ordinal))
+				{
+					if (File.Exists(Path.Join(packageDirectory, "package.json")))
+					{
+						AddExtraPackages(tables, packageDirectory);
+					}
+				}
+			}
+			else
+			{
+				Logger.Warning(LogCategory.Export, $"Extra package '{path}' was not found");
+			}
+		}
+		catch (Exception ex) when (ex is IOException or InvalidDataException or JsonException)
+		{
+			Logger.Warning(LogCategory.Export, $"Could not read extra package '{path}': {ex.Message}");
+		}
 	}
 
 	/// <summary>
@@ -196,12 +272,19 @@ public sealed partial class UnityPackageIndex
 		return candidates.FirstOrDefault(c => Directory.Exists(Path.Join(c, "BuiltInPackages")) || Directory.Exists(Path.Join(c, "Editor")) && Path.GetFileName(c) == "PackageManager");
 	}
 
-	private static void AddPackage(Dictionary<string, PackageAssembly> assemblies, Dictionary<string, PackageShader?> shaders, Dictionary<string, HashSet<string>> pluginPackages, PackageContents? contents)
+	private sealed record class PackageTables(
+		Dictionary<string, PackageAssembly> Assemblies,
+		Dictionary<string, PackageShader?> Shaders,
+		Dictionary<string, PackageResource?> Resources,
+		Dictionary<string, HashSet<string>> PluginPackages);
+
+	private static void AddPackage(PackageTables tables, PackageContents? contents)
 	{
 		if (contents is null)
 		{
 			return;
 		}
+		(Dictionary<string, PackageAssembly> assemblies, Dictionary<string, PackageShader?> shaders, Dictionary<string, PackageResource?> resources, Dictionary<string, HashSet<string>> pluginPackages) = tables;
 		foreach (string fileName in contents.PluginFileNames)
 		{
 			if (!pluginPackages.TryGetValue(fileName, out HashSet<string>? packages))
@@ -219,6 +302,11 @@ public sealed partial class UnityPackageIndex
 		{
 			// A name declared by more than one file is ambiguous, so it isn't used.
 			shaders[shader.Name] = shaders.ContainsKey(shader.Name) ? null : shader;
+		}
+		foreach (PackageResource resource in contents.CreateResources())
+		{
+			// A resource name used by more than one file is ambiguous, so it isn't used.
+			resources[resource.Name] = resources.ContainsKey(resource.Name) ? null : resource;
 		}
 	}
 
@@ -303,7 +391,8 @@ public sealed partial class UnityPackageIndex
 				|| path.EndsWith(".asmref", StringComparison.Ordinal)
 				|| path.EndsWith(".shader", StringComparison.Ordinal)
 				|| path.EndsWith(".shader.meta", StringComparison.Ordinal)
-				|| path.EndsWith("package.json", StringComparison.Ordinal);
+				|| path.EndsWith("package.json", StringComparison.Ordinal)
+				|| path.EndsWith(".meta", StringComparison.Ordinal) && GetResourceName(path[..^".meta".Length]) is not null;
 		}
 
 		/// <summary>
@@ -367,6 +456,34 @@ public sealed partial class UnityPackageIndex
 			{
 				scripts[relativePath] = text;
 			}
+		}
+
+		public IEnumerable<PackageResource> CreateResources()
+		{
+			foreach ((string path, UnityGuid guid) in metaGuids)
+			{
+				if (GetResourceName(path) is { } name)
+				{
+					yield return new PackageResource(name, guid, packageName!, packageVersion!);
+				}
+			}
+		}
+
+		/// <summary>
+		/// The name Resources.Load finds a file by: its path inside the innermost Resources folder, without extension,
+		/// in lower case. Null if the file isn't in a Resources folder, is a script, or has no extension (as folders don't).
+		/// </summary>
+		public static string? GetResourceName(string path)
+		{
+			path = path.Replace('\\', '/');
+			int folder = path.LastIndexOf("Resources/", StringComparison.Ordinal);
+			if (folder < 0 || folder > 0 && path[folder - 1] != '/' || path.EndsWith(".cs", StringComparison.Ordinal))
+			{
+				return null;
+			}
+			string relative = path[(folder + "Resources/".Length)..];
+			int dot = relative.LastIndexOf('.');
+			return dot > relative.LastIndexOf('/') ? relative[..dot].ToLowerInvariant() : null;
 		}
 
 		public IEnumerable<PackageShader> CreateShaders()

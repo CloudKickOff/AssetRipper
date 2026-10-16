@@ -85,6 +85,18 @@ public sealed record class ExportSettings
 	/// </summary>
 	public bool StableGuids { get; set; } = true;
 
+	/// <summary>
+	/// Packages to reference in addition to the ones bundled with the Unity editor, such as platform SDKs from a scoped registry:
+	/// package archives (.tgz), package directories, or directories containing either.
+	/// Game assemblies built from them are replaced with references to the packages, like <see cref="ReferenceUnityPackages"/>.
+	/// </summary>
+	public string[] ExtraPackages { get; set; } = [];
+
+	/// <summary>
+	/// Scoped registries to add to the project's package manifest, so that Unity can download the <see cref="ExtraPackages"/>.
+	/// </summary>
+	public ScopedRegistry[] PackageRegistries { get; set; } = [];
+
 	public bool SaveSettingsToDisk { get; set; }
 
 	public string? LanguageCode { get; set; }
