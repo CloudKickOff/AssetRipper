@@ -86,8 +86,10 @@ internal static class OriginalGuidRestorer
 
 	private static string? GetOriginalPath(IExportCollection collection, IOriginalGuidTarget target)
 	{
-		return target.MainAsset.OriginalPath
+		// Paths that were edited after import, such as to undo lower-casing, are joined with the platform's separator.
+		string? path = target.MainAsset.OriginalPath
 			?? (collection as PrefabExportCollection)?.RootGameObject.OriginalPath;
+		return path?.Replace('\\', '/');
 	}
 
 	private static string RemoveExtension(string path)
