@@ -1,5 +1,6 @@
 ﻿using AssetRipper.Assets;
 using AssetRipper.Assets.Bundles;
+using AssetRipper.Export.UnityProjects.Project;
 using AssetRipper.Import.Configuration;
 using AssetRipper.Import.Logging;
 using AssetRipper.SourceGenerated;
@@ -15,6 +16,12 @@ public sealed partial class ProjectExporter
 	public event Action? EventExportFinished;
 
 	private readonly ObjectHandlerStack<IAssetExporter> assetExporterStack = new();
+
+	/// <summary>
+	/// Original asset paths by guid, such as the ones in an Addressables catalog. Exported files from those paths keep
+	/// their original guid instead of a random one, so that references to them by guid still resolve.
+	/// </summary>
+	public IReadOnlyDictionary<string, string>? OriginalGuids { get; set; }
 
 	/// <summary>Adds an exporter to the stack of exporters for this asset type.</summary>
 	/// <typeparam name="T">The c sharp type of this asset type. Any inherited types also get this exporter.</typeparam>
@@ -76,6 +83,10 @@ public sealed partial class ProjectExporter
 	{
 		EventExportPreparationStarted?.Invoke();
 		List<IExportCollection> collections = CreateCollections(fileCollection);
+		if (OriginalGuids is { Count: > 0 })
+		{
+			OriginalGuidRestorer.Restore(OriginalGuids, collections);
+		}
 		EventExportPreparationFinished?.Invoke();
 
 		EventExportStarted?.Invoke();

@@ -73,6 +73,12 @@ public sealed record class ExportSettings
 	/// </summary>
 	public string[] DecompiledAssemblies { get; set; } = [];
 
+	/// <summary>
+	/// If true, assets listed in the game's Addressables catalog keep their original guids,
+	/// so that the references the game uses to load them still resolve and the content can be rebuilt.
+	/// </summary>
+	public bool RestoreAddressablesGuids { get; set; } = true;
+
 	public bool SaveSettingsToDisk { get; set; }
 
 	public string? LanguageCode { get; set; }

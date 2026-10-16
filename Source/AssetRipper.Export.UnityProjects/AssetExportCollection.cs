@@ -1,10 +1,11 @@
 using AssetRipper.Assets;
 using AssetRipper.Assets.Collections;
+using AssetRipper.Export.UnityProjects.Project;
 using AssetRipper.SourceGenerated.Classes.ClassID_1034;
 
 namespace AssetRipper.Export.UnityProjects;
 
-public class AssetExportCollection<T> : ExportCollection where T : IUnityObjectBase
+public class AssetExportCollection<T> : ExportCollection, IOriginalGuidTarget where T : IUnityObjectBase
 {
 	public AssetExportCollection(IAssetExporter assetExporter, T asset)
 	{
@@ -75,7 +76,11 @@ public class AssetExportCollection<T> : ExportCollection where T : IUnityObjectB
 		return importer;
 	}
 
-	public override UnityGuid GUID { get; } = UnityGuid.NewGuid();
+	/// <summary>
+	/// The guid of the exported file. It is random unless the original guid is known, see <see cref="ProjectExporter.OriginalGuids"/>.
+	/// </summary>
+	public override UnityGuid GUID => guid;
+	private UnityGuid guid = UnityGuid.NewGuid();
 	public override IAssetExporter AssetExporter { get; }
 	public override AssetCollection File => Asset.Collection;
 	public override IEnumerable<IUnityObjectBase> Assets
@@ -84,4 +89,7 @@ public class AssetExportCollection<T> : ExportCollection where T : IUnityObjectB
 	}
 	public override string Name => Asset.GetBestName();
 	public T Asset { get; }
+
+	IUnityObjectBase IOriginalGuidTarget.MainAsset => Asset;
+	UnityGuid IOriginalGuidTarget.Guid { get => guid; set => guid = value; }
 }

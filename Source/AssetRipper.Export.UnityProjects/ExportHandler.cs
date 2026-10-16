@@ -110,6 +110,10 @@ public class ExportHandler
 		Settings.SetProjectSettings(gameData.ProjectVersion);
 
 		ProjectExporter projectExporter = new(Settings, gameData.AssemblyManager);
+		if (Settings.ExportSettings.RestoreAddressablesGuids)
+		{
+			projectExporter.OriginalGuids = ReadAddressablesCatalog(gameData);
+		}
 		BeforeExport(projectExporter);
 		projectExporter.DoFinalOverrides(Settings);
 		projectExporter.Export(gameData.GameBundle, Settings, fileSystem);
@@ -129,6 +133,33 @@ public class ExportHandler
 				.Select(c => c.Version)
 				.Distinct()
 				.Select(v => v.ToString()));
+		}
+	}
+
+	/// <summary>
+	/// Read the original asset paths by guid from the game's Addressables catalog, if it has one.
+	/// </summary>
+	private static Dictionary<string, string>? ReadAddressablesCatalog(GameData gameData)
+	{
+		if (gameData.PlatformStructure is not { GameDataPath: { } dataPath } platform)
+		{
+			return null;
+		}
+		string catalogPath = platform.FileSystem.Path.Join(dataPath, "StreamingAssets", "aa", "catalog.bin");
+		if (!platform.FileSystem.File.Exists(catalogPath))
+		{
+			return null;
+		}
+		try
+		{
+			Dictionary<string, string> paths = AddressablesCatalog.ReadAssetPaths(platform.FileSystem.File.ReadAllBytes(catalogPath));
+			Logger.Info(LogCategory.Export, $"Read {paths.Count} asset guids from the Addressables catalog");
+			return paths;
+		}
+		catch (Exception exception) when (exception is InvalidDataException or ArgumentOutOfRangeException)
+		{
+			Logger.Warning(LogCategory.Export, $"Could not read the Addressables catalog: {exception.Message}");
+			return null;
 		}
 	}
 
