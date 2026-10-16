@@ -12,7 +12,7 @@ public sealed class SceneDefinition
 	/// Creates a new <see cref="SceneDefinition"/> from the given name and guid.
 	/// </summary>
 	/// <param name="name">The name of the scene.</param>
-	/// <param name="guid">The predefined <see cref="UnityGuid"/> for the scene. If default, a random one is assigned.</param>
+	/// <param name="guid">The predefined <see cref="UnityGuid"/> for the scene. If default, one is derived from the scene path, so the same scene gets the same guid in every export.</param>
 	/// <returns></returns>
 	public static SceneDefinition FromName(string name, UnityGuid guid = default)
 	{
@@ -20,7 +20,7 @@ public sealed class SceneDefinition
 		{
 			Name = name,
 			Path = $"Assets/Scenes/{name}",
-			GUID = guid.IsZero ? UnityGuid.NewGuid() : guid,
+			GUID = guid.IsZero ? GuidFromPath($"Assets/Scenes/{name}") : guid,
 		};
 	}
 
@@ -28,7 +28,7 @@ public sealed class SceneDefinition
 	/// Creates a new <see cref="SceneDefinition"/> from the given path and guid.
 	/// </summary>
 	/// <param name="path">The relative path to the scene.</param>
-	/// <param name="guid">The predefined <see cref="UnityGuid"/> for the scene. If default, a random one is assigned.</param>
+	/// <param name="guid">The predefined <see cref="UnityGuid"/> for the scene. If default, one is derived from the scene path, so the same scene gets the same guid in every export.</param>
 	/// <returns></returns>
 	public static SceneDefinition FromPath(string path, UnityGuid guid = default)
 	{
@@ -36,9 +36,11 @@ public sealed class SceneDefinition
 		{
 			Name = System.IO.Path.GetFileName(path),
 			Path = path,
-			GUID = guid.IsZero ? UnityGuid.NewGuid() : guid,
+			GUID = guid.IsZero ? GuidFromPath(path) : guid,
 		};
 	}
+
+	private static UnityGuid GuidFromPath(string path) => UnityGuid.Md5Hash($"Scene/{path}");
 
 	/// <summary>
 	/// The name of the scene, without any file extension.

@@ -110,6 +110,7 @@ public class ExportHandler
 		Settings.SetProjectSettings(gameData.ProjectVersion);
 
 		ProjectExporter projectExporter = new(Settings, gameData.AssemblyManager);
+		projectExporter.StableGuids = Settings.ExportSettings.StableGuids;
 		if (Settings.ExportSettings.RestoreAddressablesGuids)
 		{
 			projectExporter.OriginalGuids = ReadAddressablesCatalog(gameData);

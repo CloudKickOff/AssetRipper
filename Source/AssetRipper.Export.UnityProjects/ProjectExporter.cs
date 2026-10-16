@@ -23,6 +23,11 @@ public sealed partial class ProjectExporter
 	/// </summary>
 	public IReadOnlyDictionary<string, string>? OriginalGuids { get; set; }
 
+	/// <summary>
+	/// If true, exported files get guids derived from where their assets are in the game files, so exporting the same game again gives the same guids.
+	/// </summary>
+	public bool StableGuids { get; set; }
+
 	/// <summary>Adds an exporter to the stack of exporters for this asset type.</summary>
 	/// <typeparam name="T">The c sharp type of this asset type. Any inherited types also get this exporter.</typeparam>
 	/// <param name="exporter">The new exporter. If it doesn't work, the next one in the stack is used.</param>
@@ -83,6 +88,10 @@ public sealed partial class ProjectExporter
 	{
 		EventExportPreparationStarted?.Invoke();
 		List<IExportCollection> collections = CreateCollections(fileCollection);
+		if (StableGuids)
+		{
+			StableGuidAssigner.Assign(collections);
+		}
 		if (OriginalGuids is { Count: > 0 })
 		{
 			OriginalGuidRestorer.Restore(OriginalGuids, collections);

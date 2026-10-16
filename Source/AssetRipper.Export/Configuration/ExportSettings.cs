@@ -79,6 +79,12 @@ public sealed record class ExportSettings
 	/// </summary>
 	public bool RestoreAddressablesGuids { get; set; } = true;
 
+	/// <summary>
+	/// If true, exported files get guids derived from where their assets are in the game files instead of random ones,
+	/// so that exporting the same game again gives the same guids and Unity can reuse its import results.
+	/// </summary>
+	public bool StableGuids { get; set; } = true;
+
 	public bool SaveSettingsToDisk { get; set; }
 
 	public string? LanguageCode { get; set; }
